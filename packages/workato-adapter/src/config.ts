@@ -41,22 +41,22 @@ export const DEFAULT_ID_FIELDS = ['name']
 export const DEFAULT_FIELDS_TO_OMIT: configUtils.FieldToOmitType[] = [
   { fieldName: 'created_at', fieldType: 'string' },
   { fieldName: 'updated_at', fieldType: 'string' },
+]
+
+export const EXTENDED_SCHEMA_FIELDS: configUtils.FieldToOmitType[] = [
   { fieldName: 'extended_input_schema' },
   { fieldName: 'extended_output_schema' },
 ]
-export const FETCH_V2_FIELDS_TO_OMIT: configUtils.FieldToOmitType[] = [
-  { fieldName: 'created_at', fieldType: 'string' },
-  { fieldName: 'updated_at', fieldType: 'string' },
-  { fieldName: 'dynamicPickListSelection' },
-  { fieldName: 'visible_config_fields' },
-]
+
 export const RECIPE_FIELDS_TO_OMIT: configUtils.FieldToOmitType[] = [
   { fieldName: 'last_run_at' },
   { fieldName: 'job_succeeded_count' },
   { fieldName: 'job_failed_count' },
   { fieldName: 'copy_count' },
   { fieldName: 'lifetime_task_count' },
+  ...EXTENDED_SCHEMA_FIELDS
 ]
+
 export const CONNECTION_FIELDS_TO_OMIT: configUtils.FieldToOmitType[] = [
   { fieldName: 'authorized_at', fieldType: 'string' },
   { fieldName: 'authorization_status', fieldType: 'string' },
@@ -67,12 +67,12 @@ export const CLIENT_CONFIG = 'client'
 export const FETCH_CONFIG = 'fetch'
 export const DEPLOY_CONFIG = 'deploy'
 export const API_DEFINITIONS_CONFIG = 'apiDefinitions'
+export const SUPPORT_DEPLOY_FLAG = 'enableDeploySupport'
 
 export type WorkatoClientConfig = definitions.ClientBaseConfig<definitions.ClientRateLimitConfig>
 
 export type WorkatoFetchConfig = definitions.UserFetchConfig & {
   serviceConnectionNames?: Record<string, string[]>
-  enableFetchSturctureV2?: boolean
 }
 export type WorkatoApiConfig = configUtils.AdapterDuckTypeApiConfig
 
@@ -81,6 +81,7 @@ export type WorkatoConfig = {
   [FETCH_CONFIG]: WorkatoFetchConfig
   [API_DEFINITIONS_CONFIG]: WorkatoApiConfig
   [DEPLOY_CONFIG]?: UserDeployConfig
+  [SUPPORT_DEPLOY_FLAG]?: boolean
 }
 
 export const SUPPORTED_TYPES = {
@@ -95,7 +96,7 @@ export const SUPPORTED_TYPES = {
   [ROLE_TYPE]: [ROLE_TYPE],
 }
 
-export const DEFAULT_TYPES: Record<string, configUtils.TypeDuckTypeConfig> = {
+const DEFAULT_TYPES: Record<string, configUtils.TypeDuckTypeConfig> = {
   [CONNECTION_TYPE]: {
     request: {
       url: '/connections',
@@ -196,22 +197,19 @@ export const DEFAULT_TYPES: Record<string, configUtils.TypeDuckTypeConfig> = {
   },
 }
 
-export const getDefaultTypes = (
-  fieldsToOmit: configUtils.FieldToOmitType[] = DEFAULT_FIELDS_TO_OMIT,
-): Record<string, configUtils.TypeDuckTypeConfig> => {
+export const getDefaultTypes = (deploySupported = false): Record<string, configUtils.TypeDuckTypeConfig> => {
   const defaultTypes = _.cloneDeep(DEFAULT_TYPES)
-  const connectionTransformation = defaultTypes[CONNECTION_TYPE].transformation
-  if (connectionTransformation !== undefined) {
-    connectionTransformation.fieldsToOmit = [...fieldsToOmit, ...CONNECTION_FIELDS_TO_OMIT]
-  }
-  const recipeTransformation = defaultTypes[RECIPE_TYPE].transformation
-  if (recipeTransformation !== undefined) {
-    recipeTransformation.fieldsToOmit = [...fieldsToOmit, ...RECIPE_FIELDS_TO_OMIT]
+  if (deploySupported) {
+    // extended_schema fields cant be omitted when deploing
+    const recipeTransformation = defaultTypes[RECIPE_TYPE].transformation
+    if (recipeTransformation !== undefined) {
+      recipeTransformation.fieldsToOmit = recipeTransformation.fieldsToOmit?.filter(field => !EXTENDED_SCHEMA_FIELDS.map(ex => ex.fieldName).includes(field.fieldName))
+    }
   }
   return defaultTypes
 }
 
-export const DEFAULT_CONFIG: WorkatoConfig = {
+const DEFAULT_CONFIG: WorkatoConfig = {
   [FETCH_CONFIG]: {
     ...elements.query.INCLUDE_ALL_CONFIG,
     hideTypes: true,
@@ -231,20 +229,13 @@ export const DEFAULT_CONFIG: WorkatoConfig = {
   },
 }
 
-export const getDefaultConfig = (DeploySupported = false): WorkatoConfig => {
-  if (DeploySupported) {
-    const defaultConfig = _.cloneDeep(DEFAULT_CONFIG)
-    defaultConfig[FETCH_CONFIG].enableFetchSturctureV2 = true
-    if (defaultConfig[API_DEFINITIONS_CONFIG].typeDefaults.transformation !== undefined) {
-      defaultConfig[API_DEFINITIONS_CONFIG].typeDefaults.transformation.fieldsToOmit =
-        FETCH_V2_FIELDS_TO_OMIT
-    }
-    if (defaultConfig[API_DEFINITIONS_CONFIG].types !== undefined) {
-      defaultConfig[API_DEFINITIONS_CONFIG].types = getDefaultTypes(FETCH_V2_FIELDS_TO_OMIT)
-    }
-    return defaultConfig
+export const getDefaultConfig = (deploySupported = false): WorkatoConfig => {
+  const defaultConfig = _.cloneDeep(DEFAULT_CONFIG)
+  defaultConfig[SUPPORT_DEPLOY_FLAG] = deploySupported
+  if (defaultConfig[API_DEFINITIONS_CONFIG].types !== undefined) {
+    defaultConfig[API_DEFINITIONS_CONFIG].types = getDefaultTypes(deploySupported)
   }
-  return DEFAULT_CONFIG
+  return defaultConfig
 }
 
 export type ChangeValidatorName = 'deployNotSupported'
@@ -274,7 +265,6 @@ export const configType = new ObjectType({
           serviceConnectionNames: {
             refType: new MapType(new ListType(BuiltinTypes.STRING)),
           },
-          enableDeploySupport: { refType: BuiltinTypes.BOOLEAN },
         },
         omitElemID: true,
       }),
@@ -285,9 +275,10 @@ export const configType = new ObjectType({
     [DEPLOY_CONFIG]: {
       refType: definitions.createUserDeployConfigType(WORKATO, changeValidatorConfigType),
     },
+    [SUPPORT_DEPLOY_FLAG]: { refType: BuiltinTypes.BOOLEAN },
   },
   annotations: {
-    [CORE_ANNOTATIONS.DEFAULT]: _.omit(getDefaultConfig(), API_DEFINITIONS_CONFIG, `${FETCH_CONFIG}.hideTypes`),
+    [CORE_ANNOTATIONS.DEFAULT]: _.omit(getDefaultConfig(), API_DEFINITIONS_CONFIG, `${FETCH_CONFIG}.hideTypes`, SUPPORT_DEPLOY_FLAG),
     [CORE_ANNOTATIONS.ADDITIONAL_PROPERTIES]: false,
   },
 })
